@@ -10,36 +10,43 @@ Requirements:
 Usage:
     python gamepad_claude.py
 
-Button Mapping:
-    A           → Enter (confirm)
-    B           → Ctrl+C (interrupt)
-    X           → Type 'y' + Enter (accept edit)
-    Y           → Type 'n' + Enter (reject edit)
-    D-pad ↑/↓   → Arrow Up/Down (history / scroll)
-    D-pad ←/→   → Arrow Left/Right
-    LB          → Tab (autocomplete)
-    RB          → Escape
+Controller Profiles:
+    --xbox       Force Xbox controller mapping (default)
+    --ps5        Force PS5 DualSense mapping
+    (auto-detected if not specified)
+
+Button Mapping (Xbox / PS5):
+    A / ✕        → Enter (confirm)
+    B / ○        → Ctrl+C (interrupt)
+    X / □        → Type 'y' + Enter (accept edit)
+    Y / △        → Type 'n' + Enter (reject edit)
+    D-pad ↑/↓    → Arrow Up/Down (history / scroll)
+    D-pad ←/→    → Arrow Left/Right
+    LB / L1      → Tab (autocomplete)
+    RB / R1      → Escape
     L-Stick Click → Trigger voice input for prompt
     R-Stick Click → Trigger voice input for prompt (same, either thumb)
-    Start       → Preset prompt menu (cycle with D-pad, confirm with A)
-    Select/Back → Type '/clear' + Enter
+    Start / Options → Preset prompt menu (cycle with D-pad, confirm with A/✕)
+    Select / Create → Type '/clear' + Enter
+    LT+RT+Select → Quit the controller
 
-    LT + A/B/X/Y → Quick prompts (hold LT then press)
-        LT + A  → "fix the failing tests"
-        LT + B  → "explain this error"
-        LT + X  → "continue"
-        LT + Y  → "undo the last change"
+    LT/L2 + A/B/X/Y → Quick prompts (hold LT/L2 then press)
+        LT + A / L2 + ✕  → "fix the failing tests"
+        LT + B / L2 + ○  → "explain this error"
+        LT + X / L2 + □  → "continue"
+        LT + Y / L2 + △  → "undo the last change"
 
-    RT + A/B/X/Y → More quick prompts (hold RT then press)
-        RT + A  → "run the tests"
-        RT + B  → "show me the diff"
-        RT + X  → "looks good, commit this"
-        RT + Y  → "refactor this to be cleaner"
+    RT/R2 + A/B/X/Y → More quick prompts (hold RT/R2 then press)
+        RT + A / R2 + ✕  → "run the tests"
+        RT + B / R2 + ○  → "show me the diff"
+        RT + X / R2 + □  → "looks good, commit this"
+        RT + Y / R2 + △  → "refactor this to be cleaner"
 """
 
 import os
 import sys
 import time
+import json
 import threading
 import subprocess
 from enum import Enum, auto
@@ -115,9 +122,82 @@ SCROLL_REPEAT_MS = 120
 # D-pad as hat index
 HAT_INDEX = 0
 
-# Button indices (Xbox layout on macOS - adjust if needed)
-# These are common for Xbox/PS controllers via pygame on macOS.
-# Run with --identify to check your controller's mapping.
+# ─── Controller Profiles ─────────────────────────────────────────
+
+# Button/axis indices differ between Xbox and PS5 controllers.
+# Run with --identify to check your controller's actual mapping.
+
+PROFILES = {
+    "xbox": {
+        "name": "Xbox",
+        "btn": {
+            "A": 0, "B": 1, "X": 3, "Y": 4,
+            "LB": 6, "RB": 7,
+            "SELECT": 10, "START": 11,
+            "L_STICK": 13, "R_STICK": 14,
+        },
+        "axis": {
+            "LX": 0, "LY": 1, "RX": 2, "RY": 3,
+            "LT": 4, "RT": 5,
+        },
+        # Xbox triggers go from -1 (released) to 1 (pressed)
+        "trigger_threshold": 0.3,
+    },
+    "ps5": {
+        "name": "PS5 DualSense",
+        "btn": {
+            "A": 0,   # ✕ Cross
+            "B": 1,   # ○ Circle
+            "X": 2,   # □ Square
+            "Y": 3,   # △ Triangle
+            "LB": 4,  # L1
+            "RB": 5,  # R1
+            "SELECT": 6,   # Create
+            "START": 7,    # Options
+            "L_STICK": 8,  # L3
+            "R_STICK": 9,  # R3
+            # 10 = PS button, 11 = Touchpad click
+        },
+        "axis": {
+            "LX": 0, "LY": 1, "RX": 2, "RY": 3,
+            "LT": 4,  # L2
+            "RT": 5,  # R2
+        },
+        # PS5 triggers go from -1 (released) to 1 (pressed)
+        "trigger_threshold": 0.3,
+    },
+}
+
+# Auto-detect keywords in controller name → profile
+PS5_KEYWORDS = ["dualsense", "ps5", "wireless controller", "054c:0ce6"]
+XBOX_KEYWORDS = ["xbox", "xinput"]
+
+
+def detect_profile(controller_name: str) -> str:
+    """Auto-detect controller profile from its name."""
+    name_lower = controller_name.lower()
+    for kw in PS5_KEYWORDS:
+        if kw in name_lower:
+            return "ps5"
+    for kw in XBOX_KEYWORDS:
+        if kw in name_lower:
+            return "xbox"
+    return "xbox"  # default
+
+
+def load_profile(profile_name: str):
+    """Load a controller profile into global Btn and Axis classes."""
+    profile = PROFILES[profile_name]
+    for key, val in profile["btn"].items():
+        setattr(Btn, key, val)
+    for key, val in profile["axis"].items():
+        setattr(Axis, key, val)
+    Axis.TRIGGER_THRESHOLD = profile["trigger_threshold"]
+    return profile
+
+
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "controller_config.json")
+
 class Btn:
     A = 0
     B = 1
@@ -130,14 +210,14 @@ class Btn:
     L_STICK = 13
     R_STICK = 14
 
-# Trigger axes (Xbox controllers)
 class Axis:
-    LX = 0  # Left stick X
-    LY = 1  # Left stick Y
-    RX = 2  # Right stick X (or 3 on some controllers)
-    RY = 3  # Right stick Y
-    LT = 4  # Left trigger
-    RT = 5  # Right trigger
+    LX = 0
+    LY = 1
+    RX = 2
+    RY = 3
+    LT = 4
+    RT = 5
+    TRIGGER_THRESHOLD = 0.3
 
 
 # ─── Preset prompts (cycle with Start + D-pad) ───────────────────
@@ -153,21 +233,25 @@ PRESET_PROMPTS = [
     "add types and documentation",
 ]
 
-# Quick prompts (LT + face button)
-LT_PROMPTS = {
-    Btn.A: "fix the failing tests",
-    Btn.B: "explain this error",
-    Btn.X: "continue",
-    Btn.Y: "undo the last change",
-}
+# Quick prompts - built dynamically after profile is loaded
+LT_PROMPTS = {}
+RT_PROMPTS = {}
 
-# Quick prompts (RT + face button)
-RT_PROMPTS = {
-    Btn.A: "run the tests",
-    Btn.B: "show me the diff",
-    Btn.X: "looks good, commit this",
-    Btn.Y: "refactor this to be cleaner",
-}
+def init_quick_prompts():
+    """Initialize quick prompt dicts with current Btn values."""
+    global LT_PROMPTS, RT_PROMPTS
+    LT_PROMPTS = {
+        Btn.A: "fix the failing tests",
+        Btn.B: "explain this error",
+        Btn.X: "continue",
+        Btn.Y: "undo the last change",
+    }
+    RT_PROMPTS = {
+        Btn.A: "run the tests",
+        Btn.B: "show me the diff",
+        Btn.X: "looks good, commit this",
+        Btn.Y: "refactor this to be cleaner",
+    }
 
 
 # ─── State ────────────────────────────────────────────────────────
@@ -187,15 +271,25 @@ class State:
 
 state = State()
 kb = KBController()
+loaded_config = None  # Set after loading config file
 
 
 # ─── Helpers ──────────────────────────────────────────────────────
 
+def paste_string(s: str):
+    """Paste a string into the focused app via clipboard, without pressing Enter.
+    Uses AppleScript to set clipboard and keystroke paste for precise control."""
+    s = s.replace("\n", " ").replace("\r", "").replace('"', '\\"').replace("\\", "\\\\")
+    subprocess.run([
+        "osascript",
+        "-e", f'set the clipboard to "{s}"',
+        "-e", 'tell application "System Events" to keystroke "v" using command down',
+    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(0.1)
+
 def type_string(s: str):
-    """Type a string character by character, then press Enter."""
-    for ch in s:
-        kb.type(ch)
-        time.sleep(0.01)  # tiny delay for reliability
+    """Paste a string and press Enter."""
+    paste_string(s)
     time.sleep(0.05)
     kb.press(Key.enter)
     kb.release(Key.enter)
@@ -289,13 +383,14 @@ def voice_input_thread():
             vad_parameters=dict(min_silence_duration_ms=500),
         )
 
-        text = "".join(seg.text for seg in segments).strip()
+        text = "".join(seg.text for seg in segments).strip().replace("\n", " ")
 
         if text:
             lang = info.language
             osd(f"🎤 [{lang}] \"{text}\"")
-            notify("Voice Input", f"Typing: {text}")
-            type_string(text)
+            osd("🎤 Press A/✕ to send, B/○ to cancel")
+            notify("Voice Input", text)
+            paste_string(text)
         else:
             osd("🎤 Didn't catch that. Try again.")
             notify("Voice Input", "Couldn't understand. Try again.")
@@ -323,6 +418,36 @@ def show_preset_menu():
 # ─── Button Handlers ──────────────────────────────────────────────
 
 def on_button_down(button: int):
+    # --- D-pad as buttons (must check before other buttons to avoid collisions) ---
+    if loaded_config and loaded_config.get("dpad_type") == "button":
+        dpad = loaded_config.get("dpad", {})
+        if button == dpad.get("UP"):
+            if state.mode == Mode.PRESET_MENU:
+                state.preset_index = (state.preset_index - 1) % len(PRESET_PROMPTS)
+                show_preset_menu()
+            else:
+                press_key(Key.up)
+            return
+        elif button == dpad.get("DOWN"):
+            if state.mode == Mode.PRESET_MENU:
+                state.preset_index = (state.preset_index + 1) % len(PRESET_PROMPTS)
+                show_preset_menu()
+            else:
+                press_key(Key.down)
+            return
+        elif button == dpad.get("LEFT"):
+            press_key(Key.left)
+            return
+        elif button == dpad.get("RIGHT"):
+            press_key(Key.right)
+            return
+
+    # --- LT + RT + Select = quit ---
+    if button == Btn.SELECT and state.lt_held and state.rt_held:
+        osd("Quitting! 👋")
+        notify("Gamepad Controller", "Bye!")
+        raise SystemExit(0)
+
     # --- Modifier detection ---
     if button == Btn.SELECT:
         osd("/clear")
@@ -371,6 +496,30 @@ def on_button_down(button: int):
         type_string(prompt)
         return
 
+    # --- D-pad as buttons (when config says dpad_type == "button") ---
+    if loaded_config and loaded_config.get("dpad_type") == "button":
+        dpad = loaded_config.get("dpad", {})
+        if button == dpad.get("UP"):
+            if state.mode == Mode.PRESET_MENU:
+                state.preset_index = (state.preset_index - 1) % len(PRESET_PROMPTS)
+                show_preset_menu()
+            else:
+                press_key(Key.up)
+            return
+        elif button == dpad.get("DOWN"):
+            if state.mode == Mode.PRESET_MENU:
+                state.preset_index = (state.preset_index + 1) % len(PRESET_PROMPTS)
+                show_preset_menu()
+            else:
+                press_key(Key.down)
+            return
+        elif button == dpad.get("LEFT"):
+            press_key(Key.left)
+            return
+        elif button == dpad.get("RIGHT"):
+            press_key(Key.right)
+            return
+
     # --- Normal mode ---
     if button == Btn.A:
         osd("Enter")
@@ -399,17 +548,17 @@ def on_button_down(button: int):
 def on_hat(x: int, y: int):
     """D-pad input (hat switch)."""
     if state.mode == Mode.PRESET_MENU:
-        if y == 1:  # Up
+        if y == -1:  # Up
             state.preset_index = (state.preset_index - 1) % len(PRESET_PROMPTS)
             show_preset_menu()
-        elif y == -1:  # Down
+        elif y == 1:  # Down
             state.preset_index = (state.preset_index + 1) % len(PRESET_PROMPTS)
             show_preset_menu()
         return
 
-    if y == 1:
+    if y == -1:
         press_key(Key.up)
-    elif y == -1:
+    elif y == 1:
         press_key(Key.down)
     if x == 1:
         press_key(Key.right)
@@ -438,12 +587,187 @@ def handle_triggers(joystick):
     try:
         lt = joystick.get_axis(Axis.LT)
         rt = joystick.get_axis(Axis.RT)
-        # Triggers range from -1 (released) to 1 (fully pressed) on many controllers
-        # Some controllers: 0 to 1
-        state.lt_held = lt > 0.3
-        state.rt_held = rt > 0.3
+        state.lt_held = lt > Axis.TRIGGER_THRESHOLD
+        state.rt_held = rt > Axis.TRIGGER_THRESHOLD
     except:
         pass
+
+
+# ─── Init / Calibration Mode ─────────────────────────────────────
+
+INIT_BUTTON_PROMPTS = [
+    ("A / ✕ (确认)", "A"),
+    ("B / ○ (取消/中断)", "B"),
+    ("X / □ (接受)", "X"),
+    ("Y / △ (拒绝)", "Y"),
+    ("LB / L1 (左肩键)", "LB"),
+    ("RB / R1 (右肩键)", "RB"),
+    ("Select / Create (选择键)", "SELECT"),
+    ("Start / Options (开始键)", "START"),
+    ("左摇杆按下 (L3)", "L_STICK"),
+    ("右摇杆按下 (R3)", "R_STICK"),
+]
+
+INIT_DPAD_PROMPTS = [
+    ("D-pad ↑ (十字键上)", "UP"),
+    ("D-pad ↓ (十字键下)", "DOWN"),
+    ("D-pad ← (十字键左)", "LEFT"),
+    ("D-pad → (十字键右)", "RIGHT"),
+]
+
+INIT_AXIS_PROMPTS = [
+    ("左摇杆 → 往右推到底", "LX", 1),
+    ("左摇杆 ↓ 往下推到底", "LY", 1),
+    ("右摇杆 → 往右推到底", "RX", 1),
+    ("右摇杆 ↓ 往下推到底", "RY", 1),
+    ("LT / L2 (左扳机，按到底)", "LT", 1),
+    ("RT / R2 (右扳机，按到底)", "RT", 1),
+]
+
+
+def wait_for_button(joystick):
+    """Wait for a single button press and return its index."""
+    # Drain pending events
+    pygame.event.pump()
+    pygame.event.get()
+    while True:
+        pygame.event.pump()
+        for event in pygame.event.get():
+            if event.type == pygame.JOYBUTTONDOWN:
+                return ("button", event.button)
+            elif event.type == pygame.JOYHATMOTION:
+                if event.value != (0, 0):
+                    return ("hat", event.hat, event.value)
+        time.sleep(0.016)
+
+
+def wait_for_dpad(joystick):
+    """Wait for a D-pad press (button or hat) and return it."""
+    pygame.event.pump()
+    pygame.event.get()
+    while True:
+        pygame.event.pump()
+        for event in pygame.event.get():
+            if event.type == pygame.JOYBUTTONDOWN:
+                return ("button", event.button)
+            elif event.type == pygame.JOYHATMOTION:
+                if event.value != (0, 0):
+                    return ("hat", event.hat, event.value)
+        time.sleep(0.016)
+
+
+def wait_for_axis(joystick, threshold=0.8):
+    """Wait for an axis to be pushed past threshold, return axis index."""
+    pygame.event.pump()
+    pygame.event.get()
+    # Read baseline
+    time.sleep(0.1)
+    pygame.event.pump()
+    while True:
+        pygame.event.pump()
+        pygame.event.get()
+        for i in range(joystick.get_numaxes()):
+            val = joystick.get_axis(i)
+            if abs(val) > threshold:
+                # Wait for release
+                time.sleep(0.3)
+                return i
+        time.sleep(0.016)
+
+
+def init_mode(joystick):
+    """Interactive calibration: prompt user to press each button, save config."""
+    print("\n  ╔═══════════════════════════════════════════════╗")
+    print("  ║  🎮 手柄初始化 - 按照提示依次按下对应按键      ║")
+    print("  ║     每次只按一个键，按完等待下一个提示          ║")
+    print("  ║     按 Ctrl+C 取消                            ║")
+    print("  ╚═══════════════════════════════════════════════╝\n")
+
+    config = {"buttons": {}, "dpad": {}, "dpad_type": None, "axes": {}, "trigger_threshold": 0.3}
+
+    try:
+        # --- Buttons ---
+        print("  ── 按键映射 ──\n")
+        for prompt_text, key_name in INIT_BUTTON_PROMPTS:
+            print(f"  👉 请按下: {prompt_text}", end="", flush=True)
+            result = wait_for_button(joystick)
+            if result[0] == "button":
+                config["buttons"][key_name] = result[1]
+                print(f"  ✅ Button {result[1]}")
+            elif result[0] == "hat":
+                config["buttons"][key_name] = result[1]  # hat index as fallback
+                print(f"  ⚠️  Hat {result[1]} {result[2]} (意外，但已记录)")
+            time.sleep(0.3)
+
+        # --- D-pad ---
+        print("\n  ── 十字键映射 ──\n")
+        print("  （十字键可能被识别为 Hat 或按钮，两种都支持）\n")
+
+        dpad_results = {}
+        for prompt_text, direction in INIT_DPAD_PROMPTS:
+            print(f"  👉 请按下: {prompt_text}", end="", flush=True)
+            result = wait_for_dpad(joystick)
+            dpad_results[direction] = result
+            if result[0] == "button":
+                print(f"  ✅ Button {result[1]}")
+            elif result[0] == "hat":
+                print(f"  ✅ Hat {result[1]} {result[2]}")
+            time.sleep(0.3)
+
+        # Determine dpad type
+        dpad_types = set(r[0] for r in dpad_results.values())
+        if "hat" in dpad_types and len(dpad_types) == 1:
+            config["dpad_type"] = "hat"
+            config["dpad"]["hat_index"] = dpad_results["UP"][1]
+        else:
+            config["dpad_type"] = "button"
+            for direction, result in dpad_results.items():
+                if result[0] == "button":
+                    config["dpad"][direction] = result[1]
+                else:
+                    config["dpad"][direction] = -1  # fallback
+
+        # --- Axes ---
+        print("\n  ── 摇杆和扳机映射 ──\n")
+        for prompt_text, axis_name, _ in INIT_AXIS_PROMPTS:
+            print(f"  👉 请操作: {prompt_text}", end="", flush=True)
+            axis_idx = wait_for_axis(joystick)
+            config["axes"][axis_name] = axis_idx
+            print(f"  ✅ Axis {axis_idx}")
+            time.sleep(0.3)
+
+        # Save
+        with open(CONFIG_FILE, "w") as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+
+        print(f"\n  ✅ 配置已保存到 {CONFIG_FILE}")
+        print("  现在可以用 make run 启动了！\n")
+
+    except KeyboardInterrupt:
+        print("\n\n  ❌ 已取消初始化。\n")
+
+
+def load_config():
+    """Load saved config and apply to Btn/Axis classes. Returns config or None."""
+    if not os.path.exists(CONFIG_FILE):
+        return None
+    try:
+        with open(CONFIG_FILE) as f:
+            config = json.load(f)
+
+        # Apply button mapping
+        for key_name, btn_idx in config.get("buttons", {}).items():
+            setattr(Btn, key_name, btn_idx)
+
+        # Apply axis mapping
+        for axis_name, axis_idx in config.get("axes", {}).items():
+            setattr(Axis, axis_name, axis_idx)
+
+        Axis.TRIGGER_THRESHOLD = config.get("trigger_threshold", 0.3)
+        return config
+    except (json.JSONDecodeError, KeyError) as e:
+        print(f"  ⚠️  配置文件损坏，忽略: {e}")
+        return None
 
 
 # ─── Identify Mode ────────────────────────────────────────────────
@@ -476,18 +800,29 @@ def main():
     pygame.init()
     pygame.joystick.init()
 
+    global loaded_config
+
     identify = "--identify" in sys.argv
+    do_init = "--init" in sys.argv
+    force_profile = None
+    if "--ps5" in sys.argv:
+        force_profile = "ps5"
+    elif "--xbox" in sys.argv:
+        force_profile = "xbox"
 
     print("""
   ╔═══════════════════════════════════════════════╗
   ║  🎮 Claude Code Gamepad Controller            ║
   ║                                               ║
-  ║  A=Enter  B=Ctrl+C  X=Accept  Y=Reject       ║
-  ║  D-pad=Navigate  LB=Tab  RB=Esc              ║
-  ║  Click Stick=🎤 Voice  Start=Presets          ║
+  ║  A/✕=Enter  B/○=Ctrl+C  X/□=Accept  Y/△=Rej ║
+  ║  D-pad=Navigate  LB/L1=Tab  RB/R1=Esc        ║
+  ║  Click Stick=🎤 Voice  Start/Options=Presets  ║
   ║  LT/RT + Face=Quick Prompts                   ║
   ║                                               ║
-  ║  Run with --identify to check button mapping  ║
+  ║  --init      Interactive button calibration   ║
+  ║  --identify  Check button mapping             ║
+  ║  --ps5       Force PS5 DualSense profile      ║
+  ║  --xbox      Force Xbox profile (default)     ║
   ╚═══════════════════════════════════════════════╝
     """)
 
@@ -508,6 +843,28 @@ def main():
     print(f"     Buttons: {joystick.get_numbuttons()}, "
           f"Axes: {joystick.get_numaxes()}, "
           f"Hats: {joystick.get_numhats()}")
+
+    # --init: interactive calibration
+    if do_init:
+        init_mode(joystick)
+        return
+
+    # Try loading saved config first
+    loaded_config = load_config()
+    if loaded_config:
+        print(f"  📂 已加载自定义配置: {CONFIG_FILE}")
+        profile_source = "custom config"
+    elif force_profile:
+        profile = load_profile(force_profile)
+        profile_source = "forced"
+    else:
+        detected = detect_profile(joystick.get_name())
+        profile = load_profile(detected)
+        profile_source = "auto-detected"
+
+    init_quick_prompts()
+
+    print(f"     Profile: {profile_source}")
 
     if not HAS_SPEECH:
         print("  ⚠️  Voice input disabled (missing faster-whisper/sounddevice)")
