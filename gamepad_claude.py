@@ -354,6 +354,21 @@ def record_until_silence() -> np.ndarray:
     return audio
 
 
+TRANSCRIBE_TIMEOUT_SECONDS = 15  # Timeout for whisper transcription
+
+def _transcribe_audio(model, audio):
+    """Run whisper transcription - called with timeout."""
+    segments, info = model.transcribe(
+        audio,
+        beam_size=5,
+        language=None,  # auto-detect language (中英文都行)
+        vad_filter=True,  # filter out non-speech
+        vad_parameters=dict(min_silence_duration_ms=500),
+    )
+    text = "".join(seg.text for seg in segments).strip().replace("\n", " ")
+    return text, info
+
+
 def voice_input_thread():
     """Record speech, transcribe with faster-whisper, type as prompt."""
     if not HAS_SPEECH:
@@ -375,15 +390,11 @@ def voice_input_thread():
         osd(f"🎤 Transcribing {duration:.1f}s of audio...")
 
         model = get_whisper_model()
-        segments, info = model.transcribe(
-            audio,
-            beam_size=5,
-            language=None,  # auto-detect language (中英文都行)
-            vad_filter=True,  # filter out non-speech
-            vad_parameters=dict(min_silence_duration_ms=500),
-        )
 
-        text = "".join(seg.text for seg in segments).strip().replace("\n", " ")
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_transcribe_audio, model, audio)
+            text, info = future.result(timeout=TRANSCRIBE_TIMEOUT_SECONDS)
 
         if text:
             lang = info.language
@@ -395,6 +406,9 @@ def voice_input_thread():
             osd("🎤 Didn't catch that. Try again.")
             notify("Voice Input", "Couldn't understand. Try again.")
 
+    except concurrent.futures.TimeoutError:
+        osd(f"🎤 Transcription timed out ({TRANSCRIBE_TIMEOUT_SECONDS}s). Try again.")
+        notify("Voice Input", "Transcription timed out. Try again.")
     except Exception as e:
         osd(f"🎤 Voice error: {e}")
     finally:
