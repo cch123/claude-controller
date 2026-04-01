@@ -16,21 +16,21 @@ Supports Xbox, PS5 DualSense, and any MFi-compatible controller. Includes voice 
 - **Quick prompts** - LT/RT + face button sends preset prompts
 - **Preset menu** - Start button opens D-pad-navigable prompt list
 - **Floating HUD** - non-intrusive overlay shows button feedback and transcription
-- **macOS native** - pure Swift + AppKit, no Electron, no Python needed
+- **macOS native** - pure Swift + AppKit, no Electron, no Python
 
 ## Default Button Mapping
 
 | Button | Action |
 |--------|--------|
-| A / ✕ | Enter (confirm) |
+| A / x | Enter (confirm) |
 | B / ○ | Ctrl+C (interrupt) |
 | X / □ | Accept (y + Enter) |
 | Y / △ | Reject (n + Enter) |
 | D-pad | Arrow keys |
 | LB / L1 | Tab (autocomplete) |
 | RB / R1 | Escape |
-| Stick Click | Voice input |
-| Start / Menu | Preset prompt menu |
+| L3 / R3 Press | Voice input |
+| Start / Menu | Preset menu |
 | Select / View | `/clear` |
 | LT + Face | Quick prompt (configurable) |
 | RT + Face | Quick prompt (configurable) |
@@ -42,19 +42,19 @@ All mappings are fully customizable in Settings.
 
 ### Button Mapping
 
-Configure what each controller button does with the visual settings panel.
+Buttons grouped by region — scan and reassign high-frequency actions at a glance.
 
 ![Button Mapping](screenshots/button-mapping.png)
 
-### Quick Prompts
+### Preset Prompts
 
-Assign preset or custom prompts to trigger combinations. Presets are organized by category (Debug, Code, Edit, Git).
+Edit all trigger combos from one focused workspace. Pick a preset or write custom text, with live character count and preview.
 
-![Quick Prompts](screenshots/quick-prompts.png)
+![Preset Prompts](screenshots/quick-prompts.png)
 
 ### Speech Recognition
 
-Choose between system speech or local whisper.cpp. One-click install and model download.
+See the full voice pipeline at a glance: engine, binary install state, model download status, and LLM cleanup toggle.
 
 ![Speech Recognition](screenshots/speech-recognition.png)
 
@@ -87,7 +87,7 @@ swift build -c release
 swift run
 ```
 
-Or build and copy to Applications:
+Or build and copy to your PATH:
 
 ```bash
 swift build -c release
@@ -97,59 +97,48 @@ cp .build/release/ClaudeGamepad /usr/local/bin/
 ## First Launch
 
 1. Run `swift run` or the built binary
-2. Grant **Accessibility** permission when prompted (System Settings > Privacy & Security > Accessibility) - needed for keyboard simulation
+2. Grant **Accessibility** permission when prompted (System Settings > Privacy & Security > Accessibility) — needed for keyboard simulation
 3. Grant **Speech Recognition** permission if using voice input
-4. Connect your controller - the menu bar icon turns active
+4. Connect your controller — the menu bar icon turns active
 5. Focus your terminal running Claude Code
 6. Start pressing buttons!
 
 ## Configuration
 
-Click the menu bar icon > **Settings** to open the settings window.
+Click the menu bar icon > **Settings** to open the settings window. The settings panel uses a dark-themed card layout with three tabs.
 
-### Button Mapping Tab
+### Button Mapping
 
-Assign any action to any button. Available actions:
-- Enter, Ctrl+C, Accept (y), Reject (n)
-- Tab, Escape, Arrow keys
-- Voice Input, Preset Menu, /clear
-- Quit, None
+All button bindings organized by region: Shoulders, Face Buttons, Navigation, and System & Sticks. Each button has a dropdown to pick its action. LT/RT serve as modifier keys — their quick prompts are managed in the Preset Prompts tab.
 
-### Quick Prompts Tab
+### Preset Prompts
 
-Each trigger combo (LT+A, RT+B, etc.) can be assigned:
-- A **preset prompt** from categorized lists (Debug, Code, Edit, Git)
-- A **custom prompt** you type yourself
+The left panel lists all quick prompt slots (LT+A, LT+B, RT+A, etc.); the right panel is a focused editor. Each slot can use a preset prompt or custom text, with live character count and preview.
 
-Default presets:
+Default quick prompts:
 
-| Category | Prompts |
-|----------|---------|
-| Debug | fix the failing tests, find and fix the bug, explain this error |
-| Code | explain what this code does, refactor this to be cleaner, optimize this for performance, add types and documentation |
-| Edit | add error handling, write tests for this, continue, undo the last change |
-| Git | show me the diff, looks good commit this |
+| Trigger | Prompt |
+|---------|--------|
+| LT + A | showtime |
+| LT + B | fix the failing tests |
+| LT + X | continue |
+| LT + Y | undo the last change |
+| RT + A | run the tests |
+| RT + B | show me the diff |
+| RT + X | looks good, commit this |
+| RT + Y | add types and documentation |
 
-### Speech Recognition Tab
+### Speech Recognition
 
-**Engine**: Choose between:
-- **System** - Apple's built-in speech recognition, works out of the box
-- **Whisper** - Local whisper.cpp, better accuracy, works offline
+A top-level Voice Pipeline status bar shows engine, binary install state, model status, and LLM cleanup toggle at a glance. Below are two cards:
 
-**Whisper Setup**:
-1. Click "Install (brew)" to install whisper-cpp via Homebrew
-2. Select a model size (tiny 75MB to large-v3 3.1GB)
-3. Click "Download" - progress bar shows download status
-
-**LLM Refinement** (optional):
-- Post-processes speech with a local LLM to fix recognition errors
-- Supports Ollama, LM Studio, or any OpenAI-compatible API
-- Fixes Chinese homophones, English technical terms, punctuation
+- **Whisper Local** — select a model (tiny 75MB to large-v3 3.1GB), one-click install binary, one-click download model
+- **LLM Refinement** — configure API URL, API Key, and model name; works with Ollama, LM Studio, or any OpenAI-compatible endpoint
 
 ## Voice Input Flow
 
-1. Press **Stick Click** (L3 or R3)
-2. Floating HUD shows "Listening..."
+1. Press **L3 / R3** (stick click)
+2. Floating HUD shows "Listening..." with a live waveform
 3. Speak your prompt (auto-detects Chinese and English)
 4. HUD shows transcription with `[A=confirm B=cancel]`
 5. Press **A** to paste to terminal, or **B** to cancel
@@ -165,25 +154,12 @@ Sources/ClaudeGamepad/
   SpeechEngine.swift      # Apple SFSpeechRecognizer integration
   WhisperEngine.swift     # Local whisper.cpp CLI integration
   LLMRefiner.swift        # Optional LLM speech post-processing
-  OverlayPanel.swift      # Floating HUD panel
+  OverlayPanel.swift      # Floating HUD panel + waveform visualization
   ButtonMapping.swift     # Button action config + persistence
   SpeechSettings.swift    # Speech/LLM config + persistence
-  GamepadConfigView.swift # Visual button mapping settings UI
-  SettingsWindow.swift    # Settings window with tabs
+  GamepadConfigView.swift # Visual button mapping editor
+  SettingsWindow.swift    # Dark-themed card-based settings window
 ```
-
-## Migrating from Python Version
-
-This project was originally a Python script (`gamepad_claude.py`). The Swift rewrite provides:
-
-| | Python | Swift |
-|---|---|---|
-| Install | `pip install` 5 packages | Double-click or `swift run` |
-| Voice | Whisper (download model) | System speech (zero setup) or Whisper |
-| Controller | pygame (SDL) | GCController (native) |
-| Feedback | Terminal print | Floating HUD panel |
-| Config | `--init` CLI wizard | GUI settings window |
-| Runtime | Terminal command | Menu bar app |
 
 ## License
 
