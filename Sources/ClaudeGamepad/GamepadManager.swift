@@ -65,7 +65,8 @@ final class GamepadManager {
 
     private func configureController(_ gc: GCController) {
         controller = gc
-        let name = gc.productCategory.isEmpty ? (gc.vendorName ?? "Unknown Controller") : gc.productCategory
+        let category = gc.productCategory
+        let name = category.isEmpty ? (gc.vendorName ?? "Unknown Controller") : "\(category) Controller"
         onControllerConnected?(name)
         overlay.showMessage("🎮 \(name) connected")
 
