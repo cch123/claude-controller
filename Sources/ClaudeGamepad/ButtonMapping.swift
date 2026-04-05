@@ -19,6 +19,37 @@ enum ButtonAction: String, Codable, CaseIterable {
     case none = "None (无)"
 }
 
+/// Input element for command combos.
+enum ComboInput: String, Codable, CaseIterable {
+    case up = "↑"
+    case down = "↓"
+    case left = "←"
+    case right = "→"
+    case a = "A"
+    case b = "B"
+    case x = "X"
+    case y = "Y"
+}
+
+/// Command combo input style.
+enum ComboStyle: String, Codable, CaseIterable {
+    case fighting = "Fighting Game (格斗游戏)"
+    case helldivers = "Helldivers 2 (绝地潜兵)"
+}
+
+/// A command combo: a sequence of inputs that triggers a prompt.
+struct ComboEntry: Codable {
+    var name: String
+    var inputs: [ComboInput]
+    var prompt: String
+    var style: ComboStyle
+
+    /// Display string for the input sequence.
+    var inputDisplay: String {
+        inputs.map(\.rawValue).joined(separator: " ")
+    }
+}
+
 /// A category of preset prompts.
 struct PresetCategory: Codable {
     var name: String
@@ -101,6 +132,22 @@ struct ButtonMapping: Codable {
         ]),
     ]
 
+    static let defaultCombos: [ComboEntry] = [
+        // Helldivers-style (d-pad only)
+        ComboEntry(name: "Reinforce", inputs: [.up, .down, .right, .left, .up], prompt: "fix all the errors", style: .helldivers),
+        ComboEntry(name: "Resupply", inputs: [.down, .down, .up, .right], prompt: "add the missing dependencies", style: .helldivers),
+        ComboEntry(name: "Air Strike", inputs: [.up, .right, .down, .right], prompt: "delete all unused code", style: .helldivers),
+        ComboEntry(name: "Shield", inputs: [.down, .up, .left, .right], prompt: "add error handling to this", style: .helldivers),
+        ComboEntry(name: "Orbital", inputs: [.right, .right, .up], prompt: "refactor this completely", style: .helldivers),
+        ComboEntry(name: "EAT", inputs: [.up, .down, .left, .up, .right], prompt: "write comprehensive tests", style: .helldivers),
+        // Fighting-game-style (directions + face button finisher)
+        ComboEntry(name: "Hadouken", inputs: [.down, .right, .a], prompt: "run the tests", style: .fighting),
+        ComboEntry(name: "Shoryuken", inputs: [.right, .down, .right, .a], prompt: "fix the bug", style: .fighting),
+        ComboEntry(name: "Tatsumaki", inputs: [.down, .left, .b], prompt: "explain this code", style: .fighting),
+        ComboEntry(name: "Sonic Boom", inputs: [.left, .right, .x], prompt: "looks good, commit this", style: .fighting),
+        ComboEntry(name: "Super", inputs: [.down, .right, .down, .right, .a], prompt: "find and fix all bugs in this file", style: .fighting),
+    ]
+
     static let `default` = ButtonMapping(
         categories: defaultCategories,
         presetPrompts: defaultCategories.flatMap { $0.prompts },
@@ -116,8 +163,15 @@ struct ButtonMapping: Codable {
             x: "looks good, commit this",
             y: "refactor this to be cleaner"
         ),
-        buttonActions: .default
+        buttonActions: .default,
+        comboStyle: .helldivers,
+        combos: defaultCombos
     )
+
+    // MARK: - Command Combos
+
+    var comboStyle: ComboStyle
+    var combos: [ComboEntry]
 
     // MARK: - Persistence
 

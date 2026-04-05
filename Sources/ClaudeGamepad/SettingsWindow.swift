@@ -12,12 +12,14 @@ final class SettingsWindow: NSWindowController, NSTextViewDelegate {
     private enum SettingsSection: CaseIterable {
         case buttons
         case prompts
+        case combos
         case speech
 
         var title: String {
             switch self {
             case .buttons: return "Button Mapping"
             case .prompts: return "Preset Prompts"
+            case .combos: return "Command Combos"
             case .speech: return "Speech Recognition"
             }
         }
@@ -28,6 +30,8 @@ final class SettingsWindow: NSWindowController, NSTextViewDelegate {
                 return "Review the controller layout and keep high-frequency actions easy to scan."
             case .prompts:
                 return "Edit trigger combos from one focused workspace instead of juggling dropdowns."
+            case .combos:
+                return "Configure L2+R2 command mode: combo style and input sequences."
             case .speech:
                 return "See the whole voice pipeline at a glance: engine, model, install state, and LLM cleanup."
             }
@@ -37,6 +41,7 @@ final class SettingsWindow: NSWindowController, NSTextViewDelegate {
             switch self {
             case .buttons: return "gamecontroller"
             case .prompts: return "text.bubble"
+            case .combos: return "bolt.circle"
             case .speech: return "waveform.and.mic"
             }
         }
@@ -295,6 +300,8 @@ final class SettingsWindow: NSWindowController, NSTextViewDelegate {
             return "\(gamepadActionCount()) mapped actions"
         case .prompts:
             return "\(promptSlots.count) quick prompts"
+        case .combos:
+            return "\(mapping.combos.count) combos · \(mapping.comboStyle == .helldivers ? "Helldivers" : "Fighting")"
         case .speech:
             return selectedEngineType == .system ? "System speech" : "Whisper local"
         }
@@ -306,6 +313,8 @@ final class SettingsWindow: NSWindowController, NSTextViewDelegate {
             return buildButtonMappingTab()
         case .prompts:
             return buildPromptsTab()
+        case .combos:
+            return buildCombosTab()
         case .speech:
             return buildSpeechTab()
         }
@@ -617,6 +626,221 @@ final class SettingsWindow: NSWindowController, NSTextViewDelegate {
             .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return flattened.isEmpty ? "No prompt assigned" : flattened
+    }
+
+    // MARK: - Command Combos
+
+    private var comboStylePopup: NSPopUpButton!
+    private var comboTableContainer: FlippedView!
+
+    private func buildCombosTab() -> NSView {
+        let page = FlippedView(frame: contentContainer.bounds)
+        page.autoresizingMask = [.width, .height]
+
+        var y: CGFloat = pageInset
+
+        // Header
+        let header = NSTextField(labelWithString: "Command Combos")
+        header.font = NSFont.systemFont(ofSize: 20, weight: .bold)
+        header.textColor = .white
+        header.frame = NSRect(x: pageInset, y: y, width: 400, height: 28)
+        page.addSubview(header)
+        y += 28
+
+        let subtitle = NSTextField(labelWithString: "Hold L2+R2 to activate Command Mode. Input combos with D-pad (+ face buttons for Fighting style).")
+        subtitle.font = NSFont.systemFont(ofSize: 12)
+        subtitle.textColor = NSColor.white.withAlphaComponent(0.5)
+        subtitle.frame = NSRect(x: pageInset, y: y, width: 600, height: 18)
+        page.addSubview(subtitle)
+        y += 30
+
+        // Style selector card
+        let styleCard = SurfaceCardView(frame: NSRect(x: pageInset, y: y, width: page.bounds.width - pageInset * 2, height: 60))
+        styleCard.autoresizingMask = [.width]
+        page.addSubview(styleCard)
+
+        let styleLabel = NSTextField(labelWithString: "Combo Style")
+        styleLabel.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        styleLabel.textColor = .white
+        styleLabel.frame = NSRect(x: cardInset, y: 18, width: 120, height: 20)
+        styleCard.addSubview(styleLabel)
+
+        comboStylePopup = NSPopUpButton(frame: NSRect(x: cardInset + 130, y: 15, width: 260, height: 28))
+        for style in ComboStyle.allCases {
+            comboStylePopup.addItem(withTitle: style.rawValue)
+        }
+        comboStylePopup.selectItem(withTitle: mapping.comboStyle.rawValue)
+        comboStylePopup.target = self
+        comboStylePopup.action = #selector(comboStyleChanged(_:))
+        styleCard.addSubview(comboStylePopup)
+        y += 60 + pageGap
+
+        // Combo list card
+        let listCard = SurfaceCardView(frame: NSRect(x: pageInset, y: y, width: page.bounds.width - pageInset * 2, height: page.bounds.height - y - pageGap - 40))
+        listCard.autoresizingMask = [.width, .height]
+        page.addSubview(listCard)
+
+        // Table header
+        let headers = [("Name", cardInset, 100), ("Inputs", cardInset + 110, 160), ("Prompt", cardInset + 280, 300)]
+        for (text, hx, hw) in headers {
+            let h = NSTextField(labelWithString: text)
+            h.font = NSFont.systemFont(ofSize: 10, weight: .semibold)
+            h.textColor = NSColor.white.withAlphaComponent(0.35)
+            h.frame = NSRect(x: CGFloat(hx), y: CGFloat(cardInset), width: CGFloat(hw), height: 16)
+            listCard.addSubview(h)
+        }
+
+        let addButton = NSButton(title: "+ Add Combo", target: self, action: #selector(addCombo))
+        addButton.bezelStyle = .recessed
+        addButton.frame = NSRect(x: listCard.bounds.width - 130, y: CGFloat(cardInset) - 4, width: 110, height: 24)
+        addButton.autoresizingMask = [.minXMargin]
+        listCard.addSubview(addButton)
+
+        comboTableContainer = FlippedView(frame: NSRect(x: 0, y: CGFloat(cardInset) + 20, width: listCard.bounds.width, height: listCard.bounds.height - CGFloat(cardInset) - 20))
+        comboTableContainer.autoresizingMask = [.width, .height]
+        listCard.addSubview(comboTableContainer)
+
+        rebuildComboRows()
+
+        return page
+    }
+
+    /// Indices into `mapping.combos` for the currently selected style.
+    private func filteredComboIndices() -> [Int] {
+        mapping.combos.enumerated().compactMap { $0.element.style == mapping.comboStyle ? $0.offset : nil }
+    }
+
+    private func rebuildComboRows() {
+        comboTableContainer.subviews.forEach { $0.removeFromSuperview() }
+        let rh: CGFloat = 38
+        let indices = filteredComboIndices()
+
+        for (row, comboIndex) in indices.enumerated() {
+            let combo = mapping.combos[comboIndex]
+            let rowY = CGFloat(row) * rh
+
+            // Stripe
+            if row % 2 == 0 {
+                let bg = NSView(frame: NSRect(x: 0, y: rowY, width: comboTableContainer.bounds.width, height: rh))
+                bg.wantsLayer = true
+                bg.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.03).cgColor
+                bg.autoresizingMask = [.width]
+                comboTableContainer.addSubview(bg)
+            }
+
+            // Name (editable)
+            let nameField = NSTextField(string: combo.name)
+            nameField.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+            nameField.textColor = NSColor.systemOrange
+            nameField.isBordered = false
+            nameField.drawsBackground = false
+            nameField.isEditable = true
+            nameField.frame = NSRect(x: cardInset, y: rowY + 6, width: 100, height: 24)
+            nameField.tag = comboIndex
+            nameField.target = self
+            nameField.action = #selector(comboNameEdited(_:))
+            comboTableContainer.addSubview(nameField)
+
+            // Input sequence display
+            let seqField = NSTextField(labelWithString: combo.inputDisplay)
+            seqField.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+            seqField.textColor = NSColor.white.withAlphaComponent(0.7)
+            seqField.frame = NSRect(x: cardInset + 110, y: rowY + 6, width: 160, height: 24)
+            comboTableContainer.addSubview(seqField)
+
+            // Edit inputs button
+            let editBtn = NSButton(title: "Edit", target: self, action: #selector(editComboInputs(_:)))
+            editBtn.bezelStyle = .recessed
+            editBtn.tag = comboIndex
+            editBtn.frame = NSRect(x: cardInset + 240, y: rowY + 7, width: 36, height: 22)
+            editBtn.font = NSFont.systemFont(ofSize: 10)
+            comboTableContainer.addSubview(editBtn)
+
+            // Prompt (editable)
+            let promptField = NSTextField(string: combo.prompt)
+            promptField.font = NSFont.systemFont(ofSize: 12)
+            promptField.textColor = .white
+            promptField.isBordered = false
+            promptField.drawsBackground = false
+            promptField.isEditable = true
+            promptField.lineBreakMode = .byTruncatingTail
+            promptField.frame = NSRect(x: cardInset + 290, y: rowY + 6, width: comboTableContainer.bounds.width - cardInset - 290 - 50, height: 24)
+            promptField.tag = comboIndex
+            promptField.target = self
+            promptField.action = #selector(comboPromptEdited(_:))
+            comboTableContainer.addSubview(promptField)
+
+            // Delete button
+            let delBtn = NSButton(title: "✕", target: self, action: #selector(deleteCombo(_:)))
+            delBtn.bezelStyle = .recessed
+            delBtn.tag = comboIndex
+            delBtn.frame = NSRect(x: comboTableContainer.bounds.width - 40, y: rowY + 7, width: 24, height: 22)
+            delBtn.font = NSFont.systemFont(ofSize: 11)
+            comboTableContainer.addSubview(delBtn)
+        }
+    }
+
+    @objc private func comboStyleChanged(_ sender: NSPopUpButton) {
+        if let title = sender.selectedItem?.title,
+           let style = ComboStyle.allCases.first(where: { $0.rawValue == title }) {
+            mapping.comboStyle = style
+            rebuildComboRows()
+        }
+    }
+
+    @objc private func comboNameEdited(_ sender: NSTextField) {
+        let i = sender.tag
+        guard i >= 0, i < mapping.combos.count else { return }
+        mapping.combos[i].name = sender.stringValue
+    }
+
+    @objc private func comboPromptEdited(_ sender: NSTextField) {
+        let i = sender.tag
+        guard i >= 0, i < mapping.combos.count else { return }
+        mapping.combos[i].prompt = sender.stringValue
+    }
+
+    @objc private func addCombo() {
+        let style = mapping.comboStyle
+        let defaultInputs: [ComboInput] = style == .helldivers ? [.up, .down, .up] : [.down, .right, .a]
+        mapping.combos.append(ComboEntry(name: "New Combo", inputs: defaultInputs, prompt: "your prompt here", style: style))
+        rebuildComboRows()
+    }
+
+    @objc private func deleteCombo(_ sender: NSButton) {
+        let i = sender.tag
+        guard i >= 0, i < mapping.combos.count else { return }
+        mapping.combos.remove(at: i)
+        rebuildComboRows()
+    }
+
+    @objc private func editComboInputs(_ sender: NSButton) {
+        let i = sender.tag
+        guard i >= 0, i < mapping.combos.count else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Edit Combo Inputs: \(mapping.combos[i].name)"
+        alert.informativeText = "Enter inputs separated by spaces.\nDirections: ↑ ↓ ← →\nButtons: A B X Y\n\nExample: ↑ ↓ ← → ↑"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        field.stringValue = mapping.combos[i].inputs.map(\.rawValue).joined(separator: " ")
+        field.font = NSFont.monospacedSystemFont(ofSize: 14, weight: .medium)
+        alert.accessoryView = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let symbolMap: [String: ComboInput] = [
+            "↑": .up, "↓": .down, "←": .left, "→": .right,
+            "A": .a, "B": .b, "X": .x, "Y": .y,
+            "a": .a, "b": .b, "x": .x, "y": .y,
+        ]
+        let parts = field.stringValue.split(separator: " ").compactMap { symbolMap[String($0)] }
+        if !parts.isEmpty {
+            mapping.combos[i].inputs = parts
+            rebuildComboRows()
+        }
     }
 
     // MARK: - Speech

@@ -322,6 +322,138 @@ final class OverlayPanel: NSPanel {
         }
     }
 
+    /// Show command mode overlay with input sequence and available combos.
+    func showCommandMode(inputs: [ComboInput], combos: [ComboEntry], style: ComboStyle) {
+        DispatchQueue.main.async { [self] in
+            hideTimer?.invalidate()
+
+            titleLabel.isHidden = true
+            bodyLabel.isHidden = true
+            hintLabel.isHidden = true
+            waveformView.isHidden = true
+            iconView.isHidden = true
+            accentBubble.isHidden = true
+
+            promptSheetContainer.subviews.forEach { $0.removeFromSuperview() }
+            promptSheetContainer.isHidden = false
+
+            let font = NSFont.systemFont(ofSize: 12, weight: .medium)
+            let panelWidth: CGFloat = 420
+            let pad: CGFloat = 20
+            let titleH: CGFloat = 22
+            let inputAreaH: CGFloat = 50
+            let comboRowH: CGFloat = 24
+            let sectionGap: CGFloat = 12
+
+            // Filter to combos that still match the current input prefix
+            let matching: [ComboEntry]
+            if inputs.isEmpty {
+                matching = combos
+            } else {
+                matching = combos.filter { Array($0.inputs.prefix(inputs.count)) == inputs }
+            }
+            let maxRows = min(matching.count, 8)
+            let listH = CGFloat(maxRows) * comboRowH
+            let totalHeight = pad + titleH + sectionGap + inputAreaH + sectionGap + listH + pad
+
+            // ── Title ──
+            let styleName = style == .fighting ? "🥊 Command Mode — Fighting" : "🎮 Command Mode — Helldivers"
+            let titleField = NSTextField(labelWithString: styleName)
+            titleField.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+            titleField.textColor = NSColor.systemOrange
+            titleField.frame = NSRect(x: pad, y: totalHeight - pad - titleH, width: panelWidth - pad * 2, height: titleH)
+            promptSheetContainer.addSubview(titleField)
+
+            // ── Input sequence display ──
+            let inputY = totalHeight - pad - titleH - sectionGap - inputAreaH
+            let inputBg = NSView(frame: NSRect(x: pad, y: inputY, width: panelWidth - pad * 2, height: inputAreaH))
+            inputBg.wantsLayer = true
+            inputBg.layer?.cornerRadius = 10
+            inputBg.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.06).cgColor
+            promptSheetContainer.addSubview(inputBg)
+
+            if inputs.isEmpty {
+                let hint = NSTextField(labelWithString: style == .helldivers ? "输入方向键组合..." : "输入方向键 + 按键组合...")
+                hint.font = NSFont.systemFont(ofSize: 16, weight: .medium)
+                hint.textColor = NSColor.white.withAlphaComponent(0.3)
+                hint.sizeToFit()
+                hint.frame.origin = NSPoint(x: (panelWidth - hint.frame.width) / 2, y: inputY + (inputAreaH - hint.frame.height) / 2)
+                promptSheetContainer.addSubview(hint)
+            } else {
+                let inputColors: [ComboInput: NSColor] = [
+                    .up: .white, .down: .white, .left: .white, .right: .white,
+                    .a: .systemGreen, .b: .systemRed, .x: .systemBlue, .y: .systemYellow,
+                ]
+                let symbolSize: CGFloat = 30
+                let gap: CGFloat = 8
+                let totalW = CGFloat(inputs.count) * symbolSize + CGFloat(inputs.count - 1) * gap
+                var sx = (panelWidth - totalW) / 2
+
+                for input in inputs {
+                    let color = inputColors[input] ?? .white
+                    let isDirection = [ComboInput.up, .down, .left, .right].contains(input)
+
+                    let symbol = NSView(frame: NSRect(x: sx, y: inputY + (inputAreaH - symbolSize) / 2, width: symbolSize, height: symbolSize))
+                    symbol.wantsLayer = true
+                    symbol.layer?.cornerRadius = isDirection ? 6 : symbolSize / 2
+                    symbol.layer?.backgroundColor = (isDirection ? NSColor.white.withAlphaComponent(0.15) : color.withAlphaComponent(0.85)).cgColor
+                    promptSheetContainer.addSubview(symbol)
+
+                    let label = NSTextField(labelWithString: input.rawValue)
+                    label.font = NSFont.systemFont(ofSize: isDirection ? 16 : 13, weight: .bold)
+                    label.textColor = .white
+                    label.alignment = .center
+                    label.sizeToFit()
+                    label.frame = NSRect(
+                        x: sx + (symbolSize - label.frame.width) / 2,
+                        y: inputY + (inputAreaH - label.frame.height) / 2,
+                        width: label.frame.width,
+                        height: label.frame.height
+                    )
+                    promptSheetContainer.addSubview(label)
+
+                    sx += symbolSize + gap
+                }
+            }
+
+            // ── Combo list ──
+            let listTop = inputY - sectionGap
+            for (i, combo) in matching.prefix(maxRows).enumerated() {
+                let rowY = listTop - CGFloat(i + 1) * comboRowH
+
+                // Combo name
+                let nameField = NSTextField(labelWithString: combo.name)
+                nameField.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+                nameField.textColor = NSColor.systemOrange.withAlphaComponent(0.7)
+                nameField.frame = NSRect(x: pad, y: rowY, width: 80, height: comboRowH)
+                promptSheetContainer.addSubview(nameField)
+
+                // Input sequence
+                let seqField = NSTextField(labelWithString: combo.inputDisplay)
+                seqField.font = font
+                seqField.textColor = NSColor.white.withAlphaComponent(0.5)
+                seqField.frame = NSRect(x: pad + 80, y: rowY, width: 120, height: comboRowH)
+                promptSheetContainer.addSubview(seqField)
+
+                // Prompt
+                let promptField = NSTextField(labelWithString: combo.prompt)
+                promptField.font = font
+                promptField.textColor = NSColor.white.withAlphaComponent(0.8)
+                promptField.lineBreakMode = .byTruncatingTail
+                promptField.frame = NSRect(x: pad + 200, y: rowY, width: panelWidth - pad - 200 - pad, height: comboRowH)
+                promptSheetContainer.addSubview(promptField)
+            }
+
+            promptSheetContainer.frame = NSRect(x: 0, y: 0, width: panelWidth, height: totalHeight)
+            setContentSize(NSSize(width: panelWidth, height: totalHeight))
+            effectView.frame = NSRect(origin: .zero, size: NSSize(width: panelWidth, height: totalHeight))
+
+            positionOnScreen()
+            orderFrontRegardless()
+            alphaValue = 1
+        }
+    }
+
     /// Show transcription result.
     func showTranscription(_ text: String) {
         present(
