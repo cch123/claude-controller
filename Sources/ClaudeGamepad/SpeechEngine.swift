@@ -40,8 +40,20 @@ final class SpeechEngine {
         // Prevent double start
         guard !isRecording else { return }
 
-        // Check authorization
+        // Request authorization on first use if not yet determined
         let authStatus = SFSpeechRecognizer.authorizationStatus()
+        if authStatus == .notDetermined {
+            SFSpeechRecognizer.requestAuthorization { [weak self] status in
+                DispatchQueue.main.async {
+                    if status == .authorized {
+                        self?.startListening()
+                    } else {
+                        self?.onError?("Speech recognition not authorized. Check System Settings → Privacy.")
+                    }
+                }
+            }
+            return
+        }
         guard authStatus == .authorized else {
             onError?("Speech recognition not authorized (status: \(authStatus.rawValue)). Check System Settings → Privacy.")
             return

@@ -7,9 +7,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var settingsWindow: SettingsWindow?
 
+    private var accessibilityTimer: Timer?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         setupStatusBar()
-        setupGamepad()
         requestPermissions()
     }
 
@@ -80,18 +81,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Permissions
 
     private func requestPermissions() {
-        // Request speech recognition permission
-        SpeechEngine.shared.requestAuthorization { authorized in
-            if !authorized {
-                OverlayPanel.shared.showMessage("⚠️ Speech recognition not authorized")
-            }
-        }
+        // All TCC permission requests (Speech, Accessibility) are deferred to
+        // actual use to avoid __TCC_CRASHING_DUE_TO_PRIVACY_VIOLATION__ in
+        // non-bundled executables on macOS 26+.
+        // OverlayPanel (floating NSPanel) is also deferred — creating it at
+        // launch can trigger a screen-overlay TCC check on macOS 26.
 
-        // Check accessibility permission (needed for CGEvent keyboard simulation)
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        let trusted = AXIsProcessTrustedWithOptions(options)
-        if !trusted {
-            OverlayPanel.shared.showMessage("⚠️ Grant Accessibility access in System Settings")
+        if AXIsProcessTrusted() {
+            setupGamepad()
+        } else {
+            print("[ClaudeGamepad] Accessibility not granted.")
+            print("[ClaudeGamepad] Add this terminal app in System Settings → Privacy & Security → Accessibility.")
+            print("[ClaudeGamepad] Waiting for permission...")
+            // Poll until the user grants permission — no UI at this stage
+            accessibilityTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
+                if AXIsProcessTrusted() {
+                    timer.invalidate()
+                    self?.accessibilityTimer = nil
+                    print("[ClaudeGamepad] Accessibility granted!")
+                    self?.setupGamepad()
+                }
+            }
         }
     }
 
